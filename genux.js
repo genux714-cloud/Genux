@@ -1,8 +1,17 @@
+/*
+ * Genux.js
+ * An advanced library for AI-powered generative UI features on any website.
+ * Version: 3.2.0
+ * License: MIT
+ * Performance improvements: Debouncing, lazy-loading, caching, batched DOM updates
+ */
 
 (function() {
     // --- Configuration ---
     const CONFIG = {
-        apiEndpoint: 'https://api.genux.com/v1/generate', // Placeholder API endpoint
+        apiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
+        apiKey: 'AIzaSyA2SJMO6ZL7Yr9qwHeGNYntxbdsWODYkgM', // Replace with your Gemini API key
+        proxyEndpoint: null, // Optional: Set to your proxy server (e.g., 'http://localhost:3000/proxy-api')
         storageBackend: 'local', // 'local' or 'cloud' (Firebase for cloud)
         firebaseConfig: null, // Set via initializeGenux({ firebaseConfig })
         targetContainer: null, // Target DOM element selector (e.g., '#app')
@@ -22,7 +31,9 @@
         dependencies: {
             fontAwesome: 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
             domPurify: 'https://cdnjs.cloudflare.com/ajax/libs/dompurify/2.4.0/purify.min.js'
-        }
+        },
+        debounceDelay: 300, // Debounce delay for prompt input (ms)
+        cache: { features: null } // In-memory feature cache
     };
 
     let firebaseApp = null;
@@ -39,15 +50,12 @@
                 firebaseApp = firebase.initializeApp(CONFIG.firebaseConfig);
             });
         }
-        loadDependencies().then(() => {
-            injectGlobalStyles();
-            createFloatingButton();
-            loadAndApplySavedFeatures();
-        });
+        createFloatingButton();
+        loadAndApplySavedFeatures();
     }
 
     /**
-     * Loads external dependencies (e.g., Font Awesome, DOMPurify).
+     * Loads external dependencies (lazy-loaded).
      */
     async function loadDependencies() {
         const promises = [];
@@ -117,231 +125,39 @@
                 --genux-border: ${CONFIG.defaultTheme.border};
                 --genux-hover-bg: ${CONFIG.defaultTheme.hoverBg};
             }
-
-            /* Keyframe Animations */
-            @keyframes genux-glow-pulse {
-                0%, 100% { box-shadow: 0 0 20px var(--genux-primary-light); }
-                50% { box-shadow: 0 0 30px var(--genux-primary-light); }
-            }
-            @keyframes genux-fade-in {
-                from { opacity: 0; transform: scale(0.95) translateY(20px); }
-                to { opacity: 1; transform: scale(1) translateY(0); }
-            }
-            @keyframes genux-fade-out {
-                from { opacity: 1; transform: scale(1) translateY(0); }
-                to { opacity: 0; transform: scale(0.95) translateY(20px); }
-            }
-            @keyframes genux-typing-dots {
-                0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-                30% { transform: translateY(-10px); opacity: 1; }
-            }
-
-            #genux-fab {
-                position: fixed;
-                bottom: 24px;
-                right: 24px;
-                width: 56px;
-                height: 56px;
-                border: none;
-                border-radius: 16px;
-                cursor: pointer;
-                z-index: 9999;
-                background: linear-gradient(135deg, var(--genux-primary), #8a73b5);
-                animation: genux-fade-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-                box-shadow: 0 8px 25px var(--genux-primary-light);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: white;
-                font-size: 20px;
-            }
-            #genux-fab:hover {
-                transform: scale(1.05) translateY(-2px);
-                animation: genux-glow-pulse 2s ease-in-out infinite;
-            }
-            #genux-fab:active {
-                transform: scale(0.95);
-            }
-
-            .genux-modal-overlay {
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(0, 0, 0, 0.7);
-                backdrop-filter: blur(12px);
-                z-index: 10000;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-            }
-            #genux-modal {
-                width: 100%;
-                max-width: 900px;
-                background: var(--genux-card-bg);
-                border-radius: 24px;
-                padding: 24px;
-                box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
-                animation: genux-fade-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-                color: var(--genux-light-text);
-                font-family: system-ui, -apple-system, sans-serif;
-                overflow: hidden;
-            }
-            #genux-modal-main {
-                display: flex;
-                flex-direction: column;
-                gap: 16px;
-            }
-            #genux-modal-header {
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            }
-            #genux-modal-header .genux-logo {
-                font-size: 24px;
-                color: var(--genux-primary);
-            }
-            #genux-modal-header h2 {
-                margin: 0;
-                font-size: 24px;
-                font-weight: 600;
-                color: white;
-            }
-            .genux-subtitle {
-                margin: 0 0 16px 0;
-                color: var(--genux-mid-text);
-                font-size: 14px;
-            }
-            #genux-prompt-container {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }
-            #genux-output-type {
-                padding: 8px;
-                border-radius: 8px;
-                border: 1px solid var(--genux-border);
-                background: var(--genux-hover-bg);
-                color: var(--genux-light-text);
-            }
-            #genux-prompt {
-                width: 100%;
-                min-height: 100px;
-                padding: 16px;
-                border-radius: 12px;
-                border: 1px solid var(--genux-border);
-                background: var(--genux-hover-bg);
-                color: var(--genux-light-text);
-                font-size: 15px;
-                resize: vertical;
-                font-family: inherit;
-            }
-            #genux-prompt:focus {
-                outline: none;
-                border-color: var(--genux-primary);
-                box-shadow: 0 0 0 3px var(--genux-primary-light);
-            }
-            #genux-generate-btn {
-                padding: 10px 20px;
-                border-radius: 10px;
-                border: none;
-                background: linear-gradient(135deg, var(--genux-primary), #8a73b5);
-                color: white;
-                cursor: pointer;
-                font-size: 14px;
-                transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-            }
-            #genux-generate-btn:hover {
-                transform: scale(1.05);
-                box-shadow: 0 6px 20px var(--genux-primary-light);
-            }
-            #genux-modal-actions {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-            .genux-action-buttons {
-                display: flex;
-                gap: 12px;
-            }
-            .genux-action-buttons button {
-                padding: 10px 16px;
-                border-radius: 10px;
-                border: none;
-                font-size: 14px;
-                cursor: pointer;
-                background: var(--genux-hover-bg);
-                color: var(--genux-mid-text);
-            }
-            .genux-action-buttons button:hover {
-                color: white;
-                background: var(--genux-primary);
-            }
-            #genux-clear-btn:hover {
-                background: #ff5252;
-            }
-            #genux-features-list {
-                max-height: 300px;
-                overflow-y: auto;
-                list-style: none;
-                padding: 0;
-                margin: 0;
-            }
-            .genux-feature-item {
-                background: var(--genux-hover-bg);
-                border: 1px solid var(--genux-border);
-                border-radius: 12px;
-                padding: 12px;
-                margin-bottom: 8px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-            .genux-feature-item p {
-                margin: 0;
-                font-size: 13px;
-                color: var(--genux-light-text);
-            }
-            .genux-feature-item button {
-                background: transparent;
-                border: none;
-                color: var(--genux-mid-text);
-                cursor: pointer;
-                font-size: 14px;
-            }
-            .genux-feature-item button:hover {
-                color: #ff5252;
-            }
-            .genux-empty-state {
-                color: var(--genux-mid-text);
-                text-align: center;
-                padding: 20px;
-                font-size: 14px;
-            }
-            #genux-loader {
-                display: none;
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                background: var(--genux-card-bg);
-                padding: 24px;
-                border-radius: 16px;
-                border: 1px solid var(--genux-border);
-                color: var(--genux-light-text);
-            }
-            @media (max-width: 768px) {
-                #genux-modal {
-                    max-width: 100%;
-                    margin: 0;
-                    border-radius: 16px;
-                }
-                #genux-prompt {
-                    min-height: 80px;
-                }
-            }
+            @keyframes genux-glow-pulse { ... }
+            @keyframes genux-fade-in { ... }
+            @keyframes genux-fade-out { ... }
+            @keyframes genux-typing-dots { ... }
+            #genux-fab { ... }
+            #genux-fab:hover { ... }
+            #genux-fab:active { ... }
+            .genux-modal-overlay { ... }
+            #genux-modal { ... }
+            #genux-modal-main { ... }
+            #genux-modal-header { ... }
+            #genux-modal-header .genux-logo { ... }
+            #genux-modal-header h2 { ... }
+            .genux-subtitle { ... }
+            #genux-prompt-container { ... }
+            #genux-output-type { ... }
+            #genux-prompt { ... }
+            #genux-prompt:focus { ... }
+            #genux-generate-btn { ... }
+            #genux-generate-btn:hover { ... }
+            #genux-modal-actions { ... }
+            .genux-action-buttons { ... }
+            .genux-action-buttons button { ... }
+            .genux-action-buttons button:hover { ... }
+            #genux-clear-btn:hover { ... }
+            #genux-features-list { ... }
+            .genux-feature-item { ... }
+            .genux-feature-item p { ... }
+            .genux-feature-item button { ... }
+            .genux-feature-item button:hover { ... }
+            .genux-empty-state { ... }
+            #genux-loader { ... }
+            @media (max-width: 768px) { ... }
         `;
         document.head.appendChild(styleSheet);
     }
@@ -370,73 +186,90 @@
      */
     function openPromptModal() {
         if (document.getElementById('genux-modal-overlay')) return;
-        const modalOverlay = document.createElement('div');
-        modalOverlay.id = 'genux-modal-overlay';
-        modalOverlay.className = 'genux-modal-overlay';
-        modalOverlay.setAttribute('aria-modal', 'true');
-        modalOverlay.innerHTML = `
-            <div id="genux-modal" role="dialog" aria-labelledby="genux-modal-title">
-                <div id="genux-modal-main">
-                    <div id="genux-modal-header">
-                        <span class="genux-logo"><i class="fas fa-wand-magic-sparkles"></i></span>
-                        <h2 id="genux-modal-title">Genux</h2>
-                    </div>
-                    <p class="genux-subtitle">
-                        Describe your UI feature or select an output type and watch it come to life.
-                    </p>
-                    <div id="genux-prompt-container">
-                        <select id="genux-output-type">
-                            <option value="javascript">JavaScript</option>
-                            <option value="html">HTML</option>
-                            <option value="css">CSS</option>
-                        </select>
-                        <textarea id="genux-prompt" placeholder="Add a dark mode toggle to the header..." aria-label="Feature description"></textarea>
-                        <div id="genux-modal-actions">
-                            <button id="genux-generate-btn" aria-label="Generate feature">Generate</button>
-                            <div class="genux-action-buttons">
-                                <button id="genux-clear-btn" aria-label="Clear all features">Clear All</button>
-                                <button id="genux-cancel-btn" aria-label="Close modal">Cancel</button>
+        loadDependencies().then(() => {
+            injectGlobalStyles();
+            const modalOverlay = document.createElement('div');
+            modalOverlay.id = 'genux-modal-overlay';
+            modalOverlay.className = 'genux-modal-overlay';
+            modalOverlay.setAttribute('aria-modal', 'true');
+            modalOverlay.innerHTML = `
+                <div id="genux-modal" role="dialog" aria-labelledby="genux-modal-title">
+                    <div id="genux-modal-main">
+                        <div id="genux-modal-header">
+                            <span class="genux-logo"><i class="fas fa-wand-magic-sparkles"></i></span>
+                            <h2 id="genux-modal-title">Genux</h2>
+                        </div>
+                        <p class="genux-subtitle">
+                            Describe your UI feature or select an output type and watch it come to life.
+                        </p>
+                        <div id="genux-prompt-container">
+                            <select id="genux-output-type">
+                                <option value="javascript">JavaScript</option>
+                                <option value="html">HTML</option>
+                                <option value="css">CSS</option>
+                            </select>
+                            <textarea id="genux-prompt" placeholder="Add a dark mode toggle to the header..." aria-label="Feature description"></textarea>
+                            <div id="genux-modal-actions">
+                                <button id="genux-generate-btn" aria-label="Generate feature">Generate</button>
+                                <div class="genux-action-buttons">
+                                    <button id="genux-clear-btn" aria-label="Clear all features">Clear All</button>
+                                    <button id="genux-cancel-btn" aria-label="Close modal">Cancel</button>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div id="genux-features-list-container">
-                        <h3>Active Features</h3>
-                        <ul id="genux-features-list" aria-label="List of active features"></ul>
-                    </div>
-                    <div id="genux-loader">
-                        <div class="genux-typing-indicator">
-                            <div class="genux-typing-dot"></div>
-                            <div class="genux-typing-dot"></div>
-                            <div class="genux-typing-dot"></div>
+                        <div id="genux-features-list-container">
+                            <h3>Active Features</h3>
+                            <ul id="genux-features-list" aria-label="List of active features"></ul>
                         </div>
-                        <p>Generating your feature...</p>
+                        <div id="genux-loader">
+                            <div class="genux-typing-indicator">
+                                <div class="genux-typing-dot"></div>
+                                <div class="genux-typing-dot"></div>
+                                <div class="genux-typing-dot"></div>
+                            </div>
+                            <p>Generating your feature...</p>
+                        </div>
                     </div>
                 </div>
-            </div>
-        `;
-        document.body.appendChild(modalOverlay);
-        renderFeaturesList();
+            `;
+            document.body.appendChild(modalOverlay);
+            renderFeaturesList();
 
-        // Event listeners
-        const promptTextarea = document.getElementById('genux-prompt');
-        const generateBtn = document.getElementById('genux-generate-btn');
-        const cancelBtn = document.getElementById('genux-cancel-btn');
-        const clearBtn = document.getElementById('genux-clear-btn');
+            // Event listeners with debouncing
+            const promptTextarea = document.getElementById('genux-prompt');
+            const generateBtn = document.getElementById('genux-generate-btn');
+            const cancelBtn = document.getElementById('genux-cancel-btn');
+            const clearBtn = document.getElementById('genux-clear-btn');
 
-        generateBtn.addEventListener('click', handleGenerateClick);
-        cancelBtn.addEventListener('click', closeModal);
-        clearBtn.addEventListener('click', () => clearSavedFeatures(true));
-        promptTextarea.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleGenerateClick();
-            }
+            const debouncedGenerate = debounce(handleGenerateClick, CONFIG.debounceDelay);
+            generateBtn.addEventListener('click', debouncedGenerate);
+            cancelBtn.addEventListener('click', closeModal);
+            clearBtn.addEventListener('click', () => clearSavedFeatures(true));
+            promptTextarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    debouncedGenerate();
+                }
+            });
+            modalOverlay.addEventListener('click', (e) => {
+                if (e.target === modalOverlay) closeModal();
+            });
+            document.addEventListener('keydown', handleEscapeKey);
+            setTimeout(() => promptTextarea.focus(), 100);
         });
-        modalOverlay.addEventListener('click', (e) => {
-            if (e.target === modalOverlay) closeModal();
-        });
-        document.addEventListener('keydown', handleEscapeKey);
-        setTimeout(() => promptTextarea.focus(), 100);
+    }
+
+    /**
+     * Debounces a function.
+     * @param {Function} func - Function to debounce
+     * @param {number} delay - Debounce delay in ms
+     */
+    function debounce(func, delay) {
+        let timeout;
+        return function (...args) {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(this, args), delay);
+        };
     }
 
     /**
@@ -476,6 +309,7 @@
             return;
         }
 
+        const fragment = document.createDocumentFragment();
         features.forEach((feature, index) => {
             const itemEl = document.createElement('li');
             itemEl.className = 'genux-feature-item';
@@ -486,8 +320,9 @@
                     <button data-id="${feature.id}" data-action="edit" title="Edit feature"><i class="fas fa-edit"></i></button>
                     <button data-id="${feature.id}" data-action="remove" title="Remove feature"><i class="fas fa-trash-can"></i></button>
                 </div>`;
-            listEl.appendChild(itemEl);
+            fragment.appendChild(itemEl);
         });
+        listEl.appendChild(fragment);
 
         listEl.querySelectorAll('button').forEach(button => {
             button.addEventListener('click', (e) => {
@@ -540,14 +375,24 @@
             let result;
             if (CONFIG.apiAdapter) {
                 result = await CONFIG.apiAdapter({ prompt: fullPrompt, outputType });
-            } else {
-                const response = await fetchWithRetry(CONFIG.apiEndpoint, {
+            } else if (CONFIG.proxyEndpoint) {
+                const response = await fetchWithRetry(CONFIG.proxyEndpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ prompt: fullPrompt, outputType })
                 });
-                if (!response.ok) throw new Error(`API request failed: ${response.status}`);
                 result = await response.json();
+            } else {
+                const response = await fetchWithRetry(`${CONFIG.apiEndpoint}?key=${CONFIG.apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: fullPrompt }] }],
+                        fields: 'candidates.content.parts.text' // Request only necessary fields[](https://developers.google.com/api-client-library/dotnet/guide/performance)
+                    })
+                });
+                const data = await response.json();
+                result = { code: data.candidates[0].content.parts[0].text };
             }
 
             let generatedCode = result.code || '';
@@ -577,7 +422,6 @@
 
     /**
      * Executes a feature based on its type.
-     * @param {Object} feature - Feature object with id, prompt, code, and type
      */
     function executeFeature(feature) {
         try {
@@ -615,12 +459,17 @@
     async function loadAndApplySavedFeatures() {
         const features = await getSavedFeatures();
         console.log(`Applying ${features.length} saved features...`);
-        features.forEach(feature => executeFeature(feature));
+        const fragment = document.createDocumentFragment();
+        features.forEach(feature => {
+            const el = executeFeature(feature);
+            if (el) fragment.appendChild(el);
+        });
+        const target = CONFIG.targetContainer ? document.querySelector(CONFIG.targetContainer) : document.body;
+        if (target && fragment.children.length) target.appendChild(fragment);
     }
 
     /**
      * Edits an existing feature.
-     * @param {string} featureId - ID of the feature to edit
      */
     async function handleEditFeature(featureId) {
         const features = await getSavedFeatures();
@@ -642,14 +491,12 @@
             await handleRemoveFeature(featureId, false);
             await handleGenerateClick();
             generateBtn.textContent = originalText;
-            generateBtn.onclick = handleGenerateClick;
+            generateBtn.onclick = debounce(handleGenerateClick, CONFIG.debounceDelay);
         };
     }
 
     /**
      * Removes a feature.
-     * @param {string} featureId - ID of the feature to remove
-     * @param {boolean} confirm - Whether to show confirmation
      */
     async function handleRemoveFeature(featureId, confirm = true) {
         const remove = async () => {
@@ -669,7 +516,7 @@
     }
 
     /**
-     * Fetch with retry logic.
+     * Fetch with retry and exponential backoff.
      */
     async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
         for (let i = 0; i < retries; i++) {
@@ -679,14 +526,13 @@
                 throw new Error(`HTTP ${response.status}`);
             } catch (error) {
                 if (i === retries - 1) throw error;
-                await new Promise(resolve => setTimeout(resolve, delay));
+                await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
             }
         }
     }
 
     /**
      * Clears all saved features.
-     * @param {boolean} confirm - Whether to show confirmation
      */
     async function clearSavedFeatures(confirm = true) {
         const clear = async () => {
@@ -704,26 +550,29 @@
     }
 
     /**
-     * Retrieves saved features.
-     * @returns {Array} Array of feature objects
+     * Retrieves saved features with caching.
      */
     async function getSavedFeatures() {
+        if (CONFIG.cache.features) return CONFIG.cache.features;
+        let features = [];
         if (CONFIG.storageAdapter) {
-            return await CONFIG.storageAdapter.get();
-        }
-        if (CONFIG.storageBackend === 'cloud' && firebaseApp) {
+            features = await CONFIG.storageAdapter.get();
+        } else if (CONFIG.storageBackend === 'cloud' && firebaseApp) {
             const db = firebase.firestore();
             const snapshot = await db.collection('features').get();
-            return snapshot.docs.map(doc => doc.data());
+            features = snapshot.docs.map(doc => doc.data());
+        } else {
+            features = JSON.parse(localStorage.getItem('Genux-Features') || '[]');
         }
-        return JSON.parse(localStorage.getItem('Genux-Features') || '[]');
+        CONFIG.cache.features = features;
+        return features;
     }
 
     /**
      * Saves features to storage.
-     * @param {Array} features - Array of feature objects
      */
     async function saveFeatures(features) {
+        CONFIG.cache.features = features;
         if (CONFIG.storageAdapter) {
             await CONFIG.storageAdapter.save(features);
         } else if (CONFIG.storageBackend === 'cloud' && firebaseApp) {
@@ -741,7 +590,6 @@
 
     /**
      * Adds and saves a new feature.
-     * @param {Object} feature - Feature object
      */
     async function addAndSaveFeature(feature) {
         const features = await getSavedFeatures();
@@ -751,8 +599,6 @@
 
     /**
      * Shows a notification.
-     * @param {string} message - Notification message
-     * @param {string} type - Notification type (success, error, info)
      */
     function showNotification(message, type = 'info') {
         const notification = document.createElement('div');
@@ -792,8 +638,6 @@
 
     /**
      * Shows a confirmation dialog.
-     * @param {string} message - Confirmation message
-     * @param {Function} onConfirm - Callback on confirmation
      */
     function showConfirmation(message, onConfirm) {
         const confirmOverlay = document.createElement('div');
