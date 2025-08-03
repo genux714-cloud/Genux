@@ -1,0 +1,865 @@
+
+(function() {
+    // --- Configuration ---
+    const CONFIG = {
+        apiEndpoint: 'https://api.genux.com/v1/generate', // Placeholder API endpoint
+        storageBackend: 'local', // 'local' or 'cloud' (Firebase for cloud)
+        firebaseConfig: null, // Set via initializeGenux({ firebaseConfig })
+        targetContainer: null, // Target DOM element selector (e.g., '#app')
+        disableDefaultStyles: false, // Disable default CSS
+        customFAB: null, // Custom FAB HTML
+        customFABSelector: null, // Custom FAB selector
+        apiAdapter: null, // Custom API handler
+        storageAdapter: null, // Custom storage handler
+        defaultTheme: {
+            primary: '#4545C4',
+            cardBg: '#1f1f21',
+            lightText: '#e3e3e3',
+            midText: '#9aa0a6',
+            border: '#373739',
+            hoverBg: 'rgba(255, 255, 255, 0.04)'
+        },
+        dependencies: {
+            fontAwesome: 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
+            domPurify: 'https://cdnjs.cloudflare.com/ajax/libs/dompurify/2.4.0/purify.min.js'
+        }
+    };
+
+    let firebaseApp = null;
+
+    /**
+     * Initializes the Genux functionality on the page.
+     * @param {Object} options - Configuration options
+     */
+    function initializeGenux(options = {}) {
+        console.log("Genux Initializing...");
+        Object.assign(CONFIG, options);
+        if (CONFIG.storageBackend === 'cloud' && CONFIG.firebaseConfig && !CONFIG.storageAdapter) {
+            loadFirebase().then(() => {
+                firebaseApp = firebase.initializeApp(CONFIG.firebaseConfig);
+            });
+        }
+        loadDependencies().then(() => {
+            injectGlobalStyles();
+            createFloatingButton();
+            loadAndApplySavedFeatures();
+        });
+    }
+
+    /**
+     * Loads external dependencies (e.g., Font Awesome, DOMPurify).
+     */
+    async function loadDependencies() {
+        const promises = [];
+        if (!window.Purify) {
+            promises.push(loadScript(CONFIG.dependencies.domPurify));
+        }
+        if (!document.querySelector('link[href*="font-awesome"]')) {
+            promises.push(loadStylesheet(CONFIG.dependencies.fontAwesome));
+        }
+        return Promise.all(promises);
+    }
+
+    /**
+     * Loads Firebase SDK dynamically for cloud storage.
+     */
+    async function loadFirebase() {
+        if (typeof firebase === 'undefined') {
+            await loadScript('https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js');
+            await loadScript('https://www.gstatic.com/firebasejs/9.6.0/firebase-firestore-compat.js');
+        }
+    }
+
+    /**
+     * Dynamically loads a script.
+     * @param {string} src - Script URL
+     */
+    function loadScript(src) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = src;
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+    }
+
+    /**
+     * Dynamically loads a stylesheet.
+     * @param {string} href - Stylesheet URL
+     */
+    function loadStylesheet(href) {
+        return new Promise((resolve, reject) => {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = href;
+            link.onload = resolve;
+            link.onerror = reject;
+            document.head.appendChild(link);
+        });
+    }
+
+    /**
+     * Injects global CSS styles with customizable theme.
+     */
+    function injectGlobalStyles() {
+        if (CONFIG.disableDefaultStyles || document.getElementById('genux-styles')) return;
+        const styleSheet = document.createElement('style');
+        styleSheet.id = 'genux-styles';
+        styleSheet.type = 'text/css';
+        styleSheet.innerText = `
+            :root {
+                --genux-primary: ${CONFIG.defaultTheme.primary};
+                --genux-primary-light: ${CONFIG.defaultTheme.primary}33;
+                --genux-card-bg: ${CONFIG.defaultTheme.cardBg};
+                --genux-light-text: ${CONFIG.defaultTheme.lightText};
+                --genux-mid-text: ${CONFIG.defaultTheme.midText};
+                --genux-border: ${CONFIG.defaultTheme.border};
+                --genux-hover-bg: ${CONFIG.defaultTheme.hoverBg};
+            }
+
+            /* Keyframe Animations */
+            @keyframes genux-glow-pulse {
+                0%, 100% { box-shadow: 0 0 20px var(--genux-primary-light); }
+                50% { box-shadow: 0 0 30px var(--genux-primary-light); }
+            }
+            @keyframes genux-fade-in {
+                from { opacity: 0; transform: scale(0.95) translateY(20px); }
+                to { opacity: 1; transform: scale(1) translateY(0); }
+            }
+            @keyframes genux-fade-out {
+                from { opacity: 1; transform: scale(1) translateY(0); }
+                to { opacity: 0; transform: scale(0.95) translateY(20px); }
+            }
+            @keyframes genux-typing-dots {
+                0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+                30% { transform: translateY(-10px); opacity: 1; }
+            }
+
+            #genux-fab {
+                position: fixed;
+                bottom: 24px;
+                right: 24px;
+                width: 56px;
+                height: 56px;
+                border: none;
+                border-radius: 16px;
+                cursor: pointer;
+                z-index: 9999;
+                background: linear-gradient(135deg, var(--genux-primary), #8a73b5);
+                animation: genux-fade-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+                box-shadow: 0 8px 25px var(--genux-primary-light);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 20px;
+            }
+            #genux-fab:hover {
+                transform: scale(1.05) translateY(-2px);
+                animation: genux-glow-pulse 2s ease-in-out infinite;
+            }
+            #genux-fab:active {
+                transform: scale(0.95);
+            }
+
+            .genux-modal-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.7);
+                backdrop-filter: blur(12px);
+                z-index: 10000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }
+            #genux-modal {
+                width: 100%;
+                max-width: 900px;
+                background: var(--genux-card-bg);
+                border-radius: 24px;
+                padding: 24px;
+                box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+                animation: genux-fade-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+                color: var(--genux-light-text);
+                font-family: system-ui, -apple-system, sans-serif;
+                overflow: hidden;
+            }
+            #genux-modal-main {
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+            }
+            #genux-modal-header {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            #genux-modal-header .genux-logo {
+                font-size: 24px;
+                color: var(--genux-primary);
+            }
+            #genux-modal-header h2 {
+                margin: 0;
+                font-size: 24px;
+                font-weight: 600;
+                color: white;
+            }
+            .genux-subtitle {
+                margin: 0 0 16px 0;
+                color: var(--genux-mid-text);
+                font-size: 14px;
+            }
+            #genux-prompt-container {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            #genux-output-type {
+                padding: 8px;
+                border-radius: 8px;
+                border: 1px solid var(--genux-border);
+                background: var(--genux-hover-bg);
+                color: var(--genux-light-text);
+            }
+            #genux-prompt {
+                width: 100%;
+                min-height: 100px;
+                padding: 16px;
+                border-radius: 12px;
+                border: 1px solid var(--genux-border);
+                background: var(--genux-hover-bg);
+                color: var(--genux-light-text);
+                font-size: 15px;
+                resize: vertical;
+                font-family: inherit;
+            }
+            #genux-prompt:focus {
+                outline: none;
+                border-color: var(--genux-primary);
+                box-shadow: 0 0 0 3px var(--genux-primary-light);
+            }
+            #genux-generate-btn {
+                padding: 10px 20px;
+                border-radius: 10px;
+                border: none;
+                background: linear-gradient(135deg, var(--genux-primary), #8a73b5);
+                color: white;
+                cursor: pointer;
+                font-size: 14px;
+                transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+            }
+            #genux-generate-btn:hover {
+                transform: scale(1.05);
+                box-shadow: 0 6px 20px var(--genux-primary-light);
+            }
+            #genux-modal-actions {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .genux-action-buttons {
+                display: flex;
+                gap: 12px;
+            }
+            .genux-action-buttons button {
+                padding: 10px 16px;
+                border-radius: 10px;
+                border: none;
+                font-size: 14px;
+                cursor: pointer;
+                background: var(--genux-hover-bg);
+                color: var(--genux-mid-text);
+            }
+            .genux-action-buttons button:hover {
+                color: white;
+                background: var(--genux-primary);
+            }
+            #genux-clear-btn:hover {
+                background: #ff5252;
+            }
+            #genux-features-list {
+                max-height: 300px;
+                overflow-y: auto;
+                list-style: none;
+                padding: 0;
+                margin: 0;
+            }
+            .genux-feature-item {
+                background: var(--genux-hover-bg);
+                border: 1px solid var(--genux-border);
+                border-radius: 12px;
+                padding: 12px;
+                margin-bottom: 8px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .genux-feature-item p {
+                margin: 0;
+                font-size: 13px;
+                color: var(--genux-light-text);
+            }
+            .genux-feature-item button {
+                background: transparent;
+                border: none;
+                color: var(--genux-mid-text);
+                cursor: pointer;
+                font-size: 14px;
+            }
+            .genux-feature-item button:hover {
+                color: #ff5252;
+            }
+            .genux-empty-state {
+                color: var(--genux-mid-text);
+                text-align: center;
+                padding: 20px;
+                font-size: 14px;
+            }
+            #genux-loader {
+                display: none;
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: var(--genux-card-bg);
+                padding: 24px;
+                border-radius: 16px;
+                border: 1px solid var(--genux-border);
+                color: var(--genux-light-text);
+            }
+            @media (max-width: 768px) {
+                #genux-modal {
+                    max-width: 100%;
+                    margin: 0;
+                    border-radius: 16px;
+                }
+                #genux-prompt {
+                    min-height: 80px;
+                }
+            }
+        `;
+        document.head.appendChild(styleSheet);
+    }
+
+    /**
+     * Creates the floating action button.
+     */
+    function createFloatingButton() {
+        if (CONFIG.customFAB && CONFIG.customFABSelector) {
+            document.body.insertAdjacentHTML('beforeend', CONFIG.customFAB);
+            const fab = document.querySelector(CONFIG.customFABSelector);
+            if (fab) fab.addEventListener('click', openPromptModal);
+            return;
+        }
+        const button = document.createElement('button');
+        button.id = 'genux-fab';
+        button.title = 'Open Genux';
+        button.setAttribute('aria-label', 'Open Genux interface');
+        button.innerHTML = '<i class="fas fa-wand-magic-sparkles"></i>';
+        button.addEventListener('click', openPromptModal);
+        document.body.appendChild(button);
+    }
+
+    /**
+     * Opens the prompt modal.
+     */
+    function openPromptModal() {
+        if (document.getElementById('genux-modal-overlay')) return;
+        const modalOverlay = document.createElement('div');
+        modalOverlay.id = 'genux-modal-overlay';
+        modalOverlay.className = 'genux-modal-overlay';
+        modalOverlay.setAttribute('aria-modal', 'true');
+        modalOverlay.innerHTML = `
+            <div id="genux-modal" role="dialog" aria-labelledby="genux-modal-title">
+                <div id="genux-modal-main">
+                    <div id="genux-modal-header">
+                        <span class="genux-logo"><i class="fas fa-wand-magic-sparkles"></i></span>
+                        <h2 id="genux-modal-title">Genux</h2>
+                    </div>
+                    <p class="genux-subtitle">
+                        Describe your UI feature or select an output type and watch it come to life.
+                    </p>
+                    <div id="genux-prompt-container">
+                        <select id="genux-output-type">
+                            <option value="javascript">JavaScript</option>
+                            <option value="html">HTML</option>
+                            <option value="css">CSS</option>
+                        </select>
+                        <textarea id="genux-prompt" placeholder="Add a dark mode toggle to the header..." aria-label="Feature description"></textarea>
+                        <div id="genux-modal-actions">
+                            <button id="genux-generate-btn" aria-label="Generate feature">Generate</button>
+                            <div class="genux-action-buttons">
+                                <button id="genux-clear-btn" aria-label="Clear all features">Clear All</button>
+                                <button id="genux-cancel-btn" aria-label="Close modal">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="genux-features-list-container">
+                        <h3>Active Features</h3>
+                        <ul id="genux-features-list" aria-label="List of active features"></ul>
+                    </div>
+                    <div id="genux-loader">
+                        <div class="genux-typing-indicator">
+                            <div class="genux-typing-dot"></div>
+                            <div class="genux-typing-dot"></div>
+                            <div class="genux-typing-dot"></div>
+                        </div>
+                        <p>Generating your feature...</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modalOverlay);
+        renderFeaturesList();
+
+        // Event listeners
+        const promptTextarea = document.getElementById('genux-prompt');
+        const generateBtn = document.getElementById('genux-generate-btn');
+        const cancelBtn = document.getElementById('genux-cancel-btn');
+        const clearBtn = document.getElementById('genux-clear-btn');
+
+        generateBtn.addEventListener('click', handleGenerateClick);
+        cancelBtn.addEventListener('click', closeModal);
+        clearBtn.addEventListener('click', () => clearSavedFeatures(true));
+        promptTextarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleGenerateClick();
+            }
+        });
+        modalOverlay.addEventListener('click', (e) => {
+            if (e.target === modalOverlay) closeModal();
+        });
+        document.addEventListener('keydown', handleEscapeKey);
+        setTimeout(() => promptTextarea.focus(), 100);
+    }
+
+    /**
+     * Closes the modal.
+     */
+    function closeModal() {
+        const modalOverlay = document.getElementById('genux-modal-overlay');
+        if (modalOverlay) {
+            modalOverlay.style.animation = 'genux-fade-out 0.3s cubic-bezier(0.55, 0.055, 0.675, 0.19)';
+            document.removeEventListener('keydown', handleEscapeKey);
+            setTimeout(() => modalOverlay.remove(), 300);
+        }
+    }
+
+    /**
+     * Handles ESC key to close modal.
+     */
+    function handleEscapeKey(e) {
+        if (e.key === 'Escape') closeModal();
+    }
+
+    /**
+     * Renders the list of active features.
+     */
+    async function renderFeaturesList() {
+        const features = await getSavedFeatures();
+        const listEl = document.getElementById('genux-features-list');
+        if (!listEl) return;
+
+        listEl.innerHTML = '';
+        if (features.length === 0) {
+            listEl.innerHTML = `
+                <div class="genux-empty-state">
+                    <i class="fas fa-magic"></i>
+                    <div>No features created yet. Start by describing what you'd like to build!</div>
+                </div>`;
+            return;
+        }
+
+        features.forEach((feature, index) => {
+            const itemEl = document.createElement('li');
+            itemEl.className = 'genux-feature-item';
+            itemEl.style.animationDelay = `${index * 0.1}s`;
+            itemEl.innerHTML = `
+                <p title="${feature.prompt}">${feature.prompt}</p>
+                <div>
+                    <button data-id="${feature.id}" data-action="edit" title="Edit feature"><i class="fas fa-edit"></i></button>
+                    <button data-id="${feature.id}" data-action="remove" title="Remove feature"><i class="fas fa-trash-can"></i></button>
+                </div>`;
+            listEl.appendChild(itemEl);
+        });
+
+        listEl.querySelectorAll('button').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const featureId = e.currentTarget.getAttribute('data-id');
+                const action = e.currentTarget.getAttribute('data-action');
+                if (action === 'edit') {
+                    handleEditFeature(featureId);
+                } else {
+                    handleRemoveFeature(featureId);
+                }
+            });
+        });
+    }
+
+    /**
+     * Handles feature generation.
+     */
+    async function handleGenerateClick() {
+        const promptText = document.getElementById('genux-prompt')?.value.trim();
+        const outputType = document.getElementById('genux-output-type')?.value;
+        if (!promptText) {
+            showNotification('Please describe what you want to create.', 'error');
+            return;
+        }
+
+        const loader = document.getElementById('genux-loader');
+        const promptContainer = document.getElementById('genux-prompt-container');
+        loader.style.display = 'block';
+        promptContainer.style.opacity = '0.5';
+        promptContainer.style.pointerEvents = 'none';
+
+        try {
+            const domStructure = getPageStructure(CONFIG.targetContainer);
+            const siteCode = CONFIG.targetContainer
+                ? document.querySelector(CONFIG.targetContainer)?.innerHTML || ''
+                : document.body.innerHTML;
+            const fullPrompt = `
+                You are an expert web developer. Generate ${outputType.toUpperCase()} code for a webpage feature based on the user's request.
+                Rules:
+                1. Output only clean ${outputType.toUpperCase()} code, no markdown or explanations.
+                2. Ensure code is self-contained and idempotent.
+                3. For JavaScript, avoid global scope pollution.
+                4. For HTML/CSS, ensure WCAG 2.1 accessibility compliance.
+                5. Use modern standards (ES6+ for JS, CSS3 for CSS).
+                DOM Structure: ${domStructure}
+                User Request: ${promptText}
+                Site Code: ${siteCode}
+            `;
+
+            let result;
+            if (CONFIG.apiAdapter) {
+                result = await CONFIG.apiAdapter({ prompt: fullPrompt, outputType });
+            } else {
+                const response = await fetchWithRetry(CONFIG.apiEndpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: fullPrompt, outputType })
+                });
+                if (!response.ok) throw new Error(`API request failed: ${response.status}`);
+                result = await response.json();
+            }
+
+            let generatedCode = result.code || '';
+            generatedCode = DOMPurify.sanitize(generatedCode);
+
+            const newFeature = {
+                id: Date.now(),
+                prompt: promptText,
+                code: generatedCode,
+                type: outputType
+            };
+
+            await addAndSaveFeature(newFeature);
+            executeFeature(newFeature);
+            document.getElementById('genux-prompt').value = '';
+            renderFeaturesList();
+            showNotification('✨ Feature created successfully!', 'success');
+        } catch (error) {
+            console.error('Error generating feature:', error);
+            showNotification(`Failed: ${error.message}. Try rephrasing your prompt.`, 'error');
+        } finally {
+            loader.style.display = 'none';
+            promptContainer.style.opacity = '1';
+            promptContainer.style.pointerEvents = 'auto';
+        }
+    }
+
+    /**
+     * Executes a feature based on its type.
+     * @param {Object} feature - Feature object with id, prompt, code, and type
+     */
+    function executeFeature(feature) {
+        try {
+            const target = CONFIG.targetContainer ? document.querySelector(CONFIG.targetContainer) : document.body;
+            if (!target && feature.type !== 'javascript') {
+                showNotification('Target container not found.', 'error');
+                return;
+            }
+
+            if (feature.type === 'javascript') {
+                const script = document.createElement('script');
+                script.textContent = `try { (function() { ${feature.code} })(); } catch (e) { console.error('Genux Error:', e); }`;
+                script.dataset.featureId = feature.id;
+                document.head.appendChild(script);
+            } else if (feature.type === 'html') {
+                const div = document.createElement('div');
+                div.innerHTML = feature.code;
+                div.dataset.featureId = feature.id;
+                target.appendChild(div);
+            } else if (feature.type === 'css') {
+                const style = document.createElement('style');
+                style.textContent = feature.code;
+                style.dataset.featureId = feature.id;
+                document.head.appendChild(style);
+            }
+        } catch (error) {
+            console.error('Error executing feature:', error);
+            showNotification('Failed to apply feature.', 'error');
+        }
+    }
+
+    /**
+     * Loads and applies saved features.
+     */
+    async function loadAndApplySavedFeatures() {
+        const features = await getSavedFeatures();
+        console.log(`Applying ${features.length} saved features...`);
+        features.forEach(feature => executeFeature(feature));
+    }
+
+    /**
+     * Edits an existing feature.
+     * @param {string} featureId - ID of the feature to edit
+     */
+    async function handleEditFeature(featureId) {
+        const features = await getSavedFeatures();
+        const feature = features.find(f => f.id === parseInt(featureId));
+        if (!feature) return;
+
+        const modalOverlay = document.getElementById('genux-modal-overlay');
+        const promptTextarea = document.getElementById('genux-prompt');
+        const outputTypeSelect = document.getElementById('genux-output-type');
+
+        promptTextarea.value = feature.prompt;
+        outputTypeSelect.value = feature.type;
+        promptTextarea.focus();
+
+        const generateBtn = document.getElementById('genux-generate-btn');
+        const originalText = generateBtn.textContent;
+        generateBtn.textContent = 'Update';
+        generateBtn.onclick = async () => {
+            await handleRemoveFeature(featureId, false);
+            await handleGenerateClick();
+            generateBtn.textContent = originalText;
+            generateBtn.onclick = handleGenerateClick;
+        };
+    }
+
+    /**
+     * Removes a feature.
+     * @param {string} featureId - ID of the feature to remove
+     * @param {boolean} confirm - Whether to show confirmation
+     */
+    async function handleRemoveFeature(featureId, confirm = true) {
+        const remove = async () => {
+            const features = await getSavedFeatures();
+            const updatedFeatures = features.filter(f => f.id !== parseInt(featureId));
+            await saveFeatures(updatedFeatures);
+            document.querySelectorAll(`[data-feature-id="${featureId}"]`).forEach(el => el.remove());
+            renderFeaturesList();
+            showNotification('Feature removed.', 'info');
+        };
+
+        if (confirm) {
+            showConfirmation('Remove this feature?', remove);
+        } else {
+            await remove();
+        }
+    }
+
+    /**
+     * Fetch with retry logic.
+     */
+    async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                const response = await fetch(url, options);
+                if (response.ok) return response;
+                throw new Error(`HTTP ${response.status}`);
+            } catch (error) {
+                if (i === retries - 1) throw error;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+
+    /**
+     * Clears all saved features.
+     * @param {boolean} confirm - Whether to show confirmation
+     */
+    async function clearSavedFeatures(confirm = true) {
+        const clear = async () => {
+            await saveFeatures([]);
+            document.querySelectorAll('[data-feature-id]').forEach(el => el.remove());
+            renderFeaturesList();
+            showNotification('All features cleared.', 'info');
+        };
+
+        if (confirm) {
+            showConfirmation('Clear all features?', clear);
+        } else {
+            await clear();
+        }
+    }
+
+    /**
+     * Retrieves saved features.
+     * @returns {Array} Array of feature objects
+     */
+    async function getSavedFeatures() {
+        if (CONFIG.storageAdapter) {
+            return await CONFIG.storageAdapter.get();
+        }
+        if (CONFIG.storageBackend === 'cloud' && firebaseApp) {
+            const db = firebase.firestore();
+            const snapshot = await db.collection('features').get();
+            return snapshot.docs.map(doc => doc.data());
+        }
+        return JSON.parse(localStorage.getItem('Genux-Features') || '[]');
+    }
+
+    /**
+     * Saves features to storage.
+     * @param {Array} features - Array of feature objects
+     */
+    async function saveFeatures(features) {
+        if (CONFIG.storageAdapter) {
+            await CONFIG.storageAdapter.save(features);
+        } else if (CONFIG.storageBackend === 'cloud' && firebaseApp) {
+            const db = firebase.firestore();
+            const batch = db.batch();
+            features.forEach(feature => {
+                const ref = db.collection('features').doc(feature.id.toString());
+                batch.set(ref, feature);
+            });
+            await batch.commit();
+        } else {
+            localStorage.setItem('Genux-Features', JSON.stringify(features));
+        }
+    }
+
+    /**
+     * Adds and saves a new feature.
+     * @param {Object} feature - Feature object
+     */
+    async function addAndSaveFeature(feature) {
+        const features = await getSavedFeatures();
+        features.push(feature);
+        await saveFeatures(features);
+    }
+
+    /**
+     * Shows a notification.
+     * @param {string} message - Notification message
+     * @param {string} type - Notification type (success, error, info)
+     */
+    function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = 'genux-notification';
+        notification.setAttribute('role', 'alert');
+        Object.assign(notification.style, {
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            padding: '16px 24px',
+            borderRadius: '12px',
+            color: 'white',
+            zIndex: '10001',
+            background: 'rgba(31, 31, 33, 0.95)',
+            backdropFilter: 'blur(20px)',
+            fontSize: '14px',
+            maxWidth: '400px',
+            textAlign: 'center'
+        });
+
+        const styles = {
+            success: { borderLeft: '4px solid #4caf50', icon: '✓' },
+            error: { borderLeft: '4px solid #f44336', icon: '⚠' },
+            info: { borderLeft: '4px solid #2196f3', icon: 'ℹ' }
+        };
+        const { borderLeft, icon } = styles[type] || styles.info;
+        notification.style.borderLeft = borderLeft;
+        notification.innerHTML = `<span style="margin-right: 8px;">${icon}</span>${message}`;
+
+        document.body.appendChild(notification);
+        setTimeout(() => {
+            notification.style.animation = 'genux-fade-out 0.4s';
+            setTimeout(() => notification.remove(), 400);
+        }, 3500);
+    }
+
+    /**
+     * Shows a confirmation dialog.
+     * @param {string} message - Confirmation message
+     * @param {Function} onConfirm - Callback on confirmation
+     */
+    function showConfirmation(message, onConfirm) {
+        const confirmOverlay = document.createElement('div');
+        confirmOverlay.id = 'genux-confirm-overlay';
+        confirmOverlay.className = 'genux-modal-overlay';
+        confirmOverlay.innerHTML = `
+            <div role="dialog" aria-labelledby="genux-confirm-title">
+                <div style="background: var(--genux-card-bg); padding: 24px; border-radius: 16px; text-align: center;">
+                    <h3 id="genux-confirm-title" style="font-size: 24px; margin-bottom: 16px; color: #f44336;">⚠</h3>
+                    <p style="margin: 0 0 24px 0; font-size: 16px; color: var(--genux-light-text);">${message}</p>
+                    <div style="display: flex; justify-content: center; gap: 16px;">
+                        <button id="genux-confirm-yes-btn">Confirm</button>
+                        <button id="genux-confirm-no-btn">Cancel</button>
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(confirmOverlay);
+
+        const closeConfirm = () => {
+            confirmOverlay.style.animation = 'genux-fade-out 0.3s';
+            setTimeout(() => confirmOverlay.remove(), 300);
+        };
+
+        document.getElementById('genux-confirm-yes-btn').addEventListener('click', () => {
+            onConfirm();
+            closeConfirm();
+        });
+        document.getElementById('genux-confirm-no-btn').addEventListener('click', closeConfirm);
+    }
+
+    /**
+     * Generates detailed DOM structure.
+     */
+    function getPageStructure(targetContainer = null) {
+        let structure = 'Page DOM Structure:\n';
+        const root = targetContainer ? document.querySelector(targetContainer) : document.body;
+        if (!root) return structure;
+        const traverseDOM = (node, depth = 0) => {
+            if (node.nodeType !== 1 || node.id?.startsWith('genux')) return;
+            const indent = '  '.repeat(depth);
+            let entry = `${indent}- <${node.tagName.toLowerCase()}`;
+            if (node.id) entry += ` id="${node.id}"`;
+            if (node.className) entry += ` class="${node.className}"`;
+            entry += '>\n';
+            structure += entry;
+            Array.from(node.children).forEach(child => traverseDOM(child, depth + 1));
+        };
+        traverseDOM(root);
+        return structure;
+    }
+
+    // Initialize
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => initializeGenux());
+    } else {
+        initializeGenux();
+    }
+
+    // Expose public API
+    window.Genux = {
+        initialize: initializeGenux,
+        addFeature: addAndSaveFeature,
+        removeFeature: handleRemoveFeature,
+        clearFeatures: clearSavedFeatures,
+        openModal: openPromptModal,
+        generateFeature: handleGenerateClick,
+        getFeatures: getSavedFeatures
+    };
+})();
